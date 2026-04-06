@@ -1,129 +1,134 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
+
+def show_proxy_warning(df, protected_col):
+    """
+    Detects if other columns are acting as proxies for the protected attribute.
+    """
+    import streamlit as st
+    numeric_df = df.select_dtypes(include=['number'])
+
+    if protected_col in df.columns and not numeric_df.empty:
+        temp_df = df.copy()
+        # Convert categorical to numeric codes for correlation math
+        temp_df[protected_col] = temp_df[protected_col].astype('category').cat.codes
+
+        # Correlation check
+        corr = temp_df.corr(numeric_only=True)[protected_col].abs().sort_values(ascending=False)
+        proxies = corr[1:3] # Top 2 features excluding the attribute itself
+
+        if not proxies.empty and proxies.iloc[0] > 0.5:
+            st.warning(
+                f"Proxy Detected: **{proxies.index[0]}** is highly correlated ({proxies.iloc[0]:.2f}) with "
+                f"**{protected_col}**. Removing the sensitive attribute alone will NOT fix bias!"
+            )
 
 def get_task_info(df, target):
+    """Determines if the task is classification or regression."""
     unique_count = df[target].nunique()
-    is_classification = unique_count <= 5
-    return is_classification
+    return unique_count <= 5
 
-# --- OPTION 1: INDIVIDUAL AUDIT  ---
-def run_audit(df, target, protected, model=None):
-    st.markdown(f" Deep Dive Audit: {protected}")
+def run_audit(df, target, protected_cols, model=None):
+    """PERFORMS INTERSECTIONAL AUDIT with Visuals and Risk Labels."""
+    st.markdown(f"### 🔍 Intersectional Deep Dive")
     is_classification = get_task_info(df, target)
     
-    # 1. Dataset Bias Logic
+    df_temp = df.copy()
+    # Create combined identity key for intersectional groups
+    df_temp['Demographic Groups'] = df_temp[protected_cols].astype(str).agg(' & '.join, axis=1)
+    
+    # Calculate group averages
+    group_stats = df_temp.groupby('Demographic Groups')[target].mean().sort_values()
+
+    # Visual Bar Chart for Impact
+    st.write("#### Success Rate by Intersectional Group")
+    fig, ax = plt.subplots(figsize=(10, 5))
+    # Highlight extreme values in Red
+    colors = ['#ff4b4b' if (x == group_stats.min() or x == group_stats.max()) else '#0078ff' for x in group_stats]
+    group_stats.plot(kind='barh', ax=ax, color=colors)
+    ax.set_xlabel("Mean Outcome (Success Rate)")
+    st.pyplot(fig)
+
     if is_classification:
-        st.info(" Task: Classification Detected")
-        stats = df.groupby(protected)[target].mean() * 100
-        gap = stats.max() - stats.min()
-        metric_label = "Fairness Gap"
+        gap = (group_stats.max() - group_stats.min()) * 100
+        metric_label = "Max Fairness Gap"
         metric_value = f"{gap:.1f}%"
-        is_high_risk = gap > 15
-        detail_text = f"The difference in success rates between groups is **{gap:.1f}%**."
+        # Logic for Risk Labels
+        risk_level = "🔴 HIGH RISK" if gap > 15 else "🟡 MODERATE" if gap > 5 else "🟢 LOW RISK"
     else:
-        st.info(" Task: Numerical/Regression Detected")
-        group_stats = df.groupby(protected)[target].mean()
-        ratio = group_stats.max() / group_stats.min() if group_stats.min() != 0 else 0
-        gap = ratio * 10 # Normalize for fixer logic
+        ratio = group_stats.max() / (group_stats.min() + 1e-6)
+        gap = ratio
         metric_label = "Disparity Ratio"
         metric_value = f"{ratio:.2f}x"
-        is_high_risk = ratio > 1.5
-        detail_text = f"The highest group receives **{ratio:.1f}x** more on average."
+        risk_level = "🔴 HIGH RISK" if ratio > 1.5 else "🟡 MODERATE" if ratio > 1.2 else "🟢 LOW RISK"
 
-    # 2. Model Bias
-    model_biased = False
-    discrepancy_count = 0
-    if model is not None:
-        try:
-            test_data = df.drop(columns=[target]).head(10)
-            # Ensure we don't pass helper columns if they exist
-            test_data = test_data[[c for c in test_data.columns if c not in ['is_success', 'sample_weight']]]
-            
-            preds_orig = model.predict(test_data)
-            test_data_flipped = test_data.copy()
-            groups = df[protected].unique()
-            if len(groups) >= 2:
-                test_data_flipped[protected] = test_data_flipped[protected].map({groups[0]: groups[1], groups[1]: groups[0]})
-                preds_flipped = model.predict(test_data_flipped)
-                discrepancy_count = np.sum(preds_orig != preds_flipped)
-                model_biased = discrepancy_count > 0
-        except Exception as e:
-            st.warning(f"Model audit skipped: {e}")
-
-    # 3. Display
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric(metric_label, metric_value, 
-                  delta="- High Risk" if is_high_risk else "Fair", delta_color="inverse")
-        st.write(detail_text)
+    # Display Metrics with Risk Labels
+    c1, c2 = st.columns(2)
+    c1.metric(metric_label, metric_value)
+    c2.metric("Risk Status", risk_level)
     
-    with col2:
-        if model:
-            status = " Biased" if model_biased else "Stable"
-            st.metric("Model Logic Status", status, delta=f"{discrepancy_count} flips" if model_biased else "Consistent")
-        else:
-            st.metric("Model Status", "Not Provided")
+    return {
+        "gap": gap, 
+        "protected_cols": protected_cols, 
+        "is_classification": is_classification,
+        "stats": group_stats,
+        "target": target,
+        "risk": risk_level
+    }
 
-    return {"gap": gap, "protected_col": protected, "model_biased": model_biased, "is_classification": is_classification}
-
-# --- OPTION 2: AUDIT ALL  ---
-def run_audit_all(df, target, all_potential_cols):
-    st.markdown("### 🌍 Global Dataset Scan")
-
-    is_classification = df[target].nunique() <= 5
-    st.write(f"Scanning attributes against **{target}** ({'Classification' if is_classification else 'Numerical'})...")
+def run_audit_all(df, target, all_cols):
+    """AUTOMATED GLOBAL SCAN: Finds bias across every column."""
+    st.markdown("#### 📊 Global Attribute Risk Scan")
+    temp_df = df.copy()
     
+    # Ensure target is numeric for math
+    if temp_df[target].dtype == 'object':
+        temp_df[target] = pd.factorize(temp_df[target])[0]
+
     scan_results = []
+    is_classification = get_task_info(df, target)
     
-    for col in all_potential_cols:
-
-        if col in [target, 'is_success', 'sample_weight']: 
+    for col in all_cols:
+        if temp_df[col].nunique() > 20 or temp_df[col].nunique() < 2:
             continue
-
-        if df[col].nunique() > 20: 
-            continue
-
-        if df[col].nunique() == len(df):
-            continue
-
-        try:
-            group_stats = df.groupby(col)[target].mean()
             
+        try:
+            group_stats = temp_df.groupby(col)[target].mean().dropna()
+            if group_stats.empty: continue
+
             if is_classification:
                 score = (group_stats.max() - group_stats.min()) * 100
-                metric_name = "Fairness Gap (%)"
-                risk_threshold = 15 
+                risk = "🔴 High" if score > 15 else "🟡 Med" if score > 5 else "🟢 Low"
             else:
-                score = group_stats.max() / group_stats.min() if group_stats.min() != 0 else 0
-                metric_name = "Disparity Ratio (x)"
-                risk_threshold = 1.5 
+                score = group_stats.max() / (group_stats.min() + 1e-6)
+                risk = "🔴 High" if score > 1.5 else "🟡 Med" if score > 1.2 else "🟢 Low"
 
             scan_results.append({
                 "Attribute": col,
-                metric_name: round(score, 2),
-                "Risk Level": "🔴 High Risk" if score > risk_threshold else "🟢 Low Risk"
+                "Fairness Score": round(abs(score), 2),
+                "Risk Level": risk
             })
-        except Exception as e:
-            continue 
+        except:
+            continue
 
-    # 4. Display Results
     if scan_results:
         results_df = pd.DataFrame(scan_results)
-
-        metric_col = results_df.columns[1]
-        results_df = results_df.sort_values(by=metric_col, ascending=False)
-        
+        # Sort by the score column
+        results_df = results_df.sort_values(by=results_df.columns[1], ascending=False)
         st.table(results_df)
-
-        worst = results_df.iloc[0]
-        st.warning(f" **Recommendation:** The attribute **{worst['Attribute']}** shows the highest disparity. Consider targeting this for mitigation.")
-        
-        return {
-            "gap": worst[metric_col], 
-            "protected_col": worst['Attribute'], 
-            "is_classification": is_classification
-        }
     else:
-        st.error("No valid categorical attributes found for auditing.")
-        return None
+        st.info("No categorical columns detected for automated scanning.")
+
+def get_gemini_insight(results):
+    """Generates structured data for the Report tab and PDF."""
+    if not results: return None
+    unit = "%" if results['is_classification'] else "x"
+    
+    return {
+        "summary": f"Audit performed on '{results['target']}' across {len(results['protected_cols'])} attributes.",
+        "finding": f"The maximum observed disparity is {results['gap']:.2f}{unit}.",
+        "risk": results['risk'],
+        "recommendation": "Implement Kamiran-Calders reweighing to normalize sample importance and ensure equal success rates."
+    }

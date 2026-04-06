@@ -1,8 +1,9 @@
 import streamlit as st
 import google.generativeai as genai
 import pandas as pd
+from fpdf import FPDF
 
-GEMINI_API_KEY = "YOUR_GEMINI_API_KEY"
+GEMINI_API_KEY = "AIzaSyBEqwnpZqHCX6Yr_oW4V7i77y4Zv8TeVUo"
 
 if GEMINI_API_KEY:
     try:
@@ -49,9 +50,23 @@ def generate_ai_report(audit_results, is_mitigated=False):
             report_text = f"Mitigation strategies have successfully reduced the disparity in **{attr}**. By balancing sample weights, we have moved the model toward demographic parity while maintaining data integrity. Expert Tip: Monitor model performance over time to ensure fairness holds on new, unseen data."
 
     # 4. Display result
+        # 4. Display result
     with st.container(border=True):
         st.write(report_text)
         st.caption(source_label)
+
+        # ✅ PDF DOWNLOAD BUTTON (ONLY ADDITION)
+        pdf_data = create_pdf(audit_results, report_text)
+        st.download_button(
+            label="📥 Download PDF Report",
+            data=pdf_data,
+            file_name="AI_Ethics_Report.pdf",
+            mime="application/pdf"
+        )
+    return {
+        "risk": audit_results.get('risk', 'Unknown'),
+        "finding": report_text
+    }
 
 
 def show_proxy_warning(df, protected_col):
@@ -74,3 +89,52 @@ def show_proxy_warning(df, protected_col):
                 f"Proxy Detected: **{proxies.index[0]}** is highly correlated ({proxies.iloc[0]:.2f}) with "
                 f"**{protected_col}**. Removing the sensitive attribute alone will NOT fix bias!"
             )
+
+def sanitize_text(text):
+    if not isinstance(text, str):
+        text = str(text)
+
+    # Replace known emojis
+    replacements = {
+        '🔴': 'HIGH RISK',
+        '🟡': 'MODERATE',
+        '🟢': 'LOW RISK'
+    }
+    for k, v in replacements.items():
+        text = text.replace(k, v)
+
+    # ✅ REMOVE ANY NON-LATIN-1 CHARACTERS (MAIN FIX)
+    text = text.encode('latin-1', 'ignore').decode('latin-1')
+
+    return text
+
+# --- PDF CREATION ---
+def create_pdf(audit_results, report_text):
+    pdf = FPDF()
+    pdf.add_page()
+
+    # ✅ SANITIZE EVERYTHING FIRST
+    protected = sanitize_text(audit_results.get('protected_col','N/A'))
+    gap = sanitize_text(str(audit_results.get('gap',0)))
+    risk = sanitize_text(audit_results.get('risk','Unknown'))
+    report_text = sanitize_text(report_text)
+
+    pdf.set_font("Arial", 'B', 18)
+    pdf.cell(0, 12, "FairFrame AI Audit Report", ln=True, align='C')
+
+    pdf.ln(10)
+
+    pdf.set_font("Arial", '', 12)
+    pdf.cell(0, 8, f"Protected Attribute: {protected}", ln=True)
+    pdf.cell(0, 8, f"Bias Score: {gap}", ln=True)
+    pdf.cell(0, 8, f"Risk: {risk}", ln=True)
+
+    pdf.ln(10)
+
+    pdf.set_font("Arial", 'B', 14)
+    pdf.cell(0, 10, "AI Ethical Report", ln=True)
+
+    pdf.set_font("Arial", '', 11)
+    pdf.multi_cell(0, 8, report_text)
+
+    return pdf.output(dest='S').encode('latin-1', errors='replace')
