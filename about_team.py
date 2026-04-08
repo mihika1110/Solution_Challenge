@@ -333,7 +333,7 @@ def show_about_team():
         dict(
             name="Mihika Saxena",
             role="Data & Integration Engineer",
-            image_path="assets/mihika.jpeg",
+            image_path="assets/mihika.jpg",
             linkedin="https://www.linkedin.com/in/mihika-saxena-b5bb8a28b/",
             email="mihika11saxena@gmail.com",
             phone="+91-7740910965",
