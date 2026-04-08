@@ -324,7 +324,7 @@ def show_about_team():
         dict(
             name="Sakshi Saxena",
             role="AI Ethical Auditor",
-            image_path="https://i.pravatar.cc/150?img=32",
+            image_path="assets/sakshi.jpeg",
             linkedin="https://www.linkedin.com/in/sakshi-saxena-a01392287/",
             email="sakshisaxena7121@gmail.com",
             phone="+91-7428955499",
