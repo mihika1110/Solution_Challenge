@@ -306,7 +306,7 @@ def show_about_team():
         dict(
             name="Manshi Prajapati",
             role="Model Bias & UI Engineer",
-            image_path="https://i.pravatar.cc/150?img=5",
+            image_path="assets/manshi.jpeg",
             linkedin="https://www.linkedin.com/in/manshi-prajapati-a407192aa/",
             email="manshiprajapati332@gmail.com",
             phone="+91-7489378054",
