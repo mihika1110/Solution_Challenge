@@ -169,3 +169,79 @@ def create_pdf(audit_results, report_text):
     pdf.multi_cell(0, 8, report_text)
 
     return pdf.output(dest='S').encode('latin-1', errors='replace')
+
+def generate_micro_insight(context_type, df=None, target=None, protected_cols=None, stats=None):
+    """
+    Generates short real-time insights for each step.
+    """
+
+    try:
+        if not client:
+            raise Exception("No API")
+
+        if context_type == "data_upload":
+            prompt = f"""
+You are an AI fairness expert.
+
+Dataset has {df.shape[0]} rows and {df.shape[1]} columns.
+
+Column names:
+{list(df.columns)}
+
+Give:
+1. One quick risk observation
+2. Suggest 1–2 sensitive attributes
+
+Keep it short (2-3 lines max).
+"""
+
+        elif context_type == "selection":
+            prompt = f"""
+User selected:
+Target: {target}
+Protected: {protected_cols}
+
+Comment if this is a good fairness setup or suggest improvement.
+Keep it short.
+"""
+
+        elif context_type == "analysis":
+            prompt = f"""
+Fairness gap observed: {stats.get('gap',0)}
+
+Explain in simple terms what this means.
+Is it risky?
+
+Keep it short.
+"""
+
+        elif context_type == "mitigation":
+            prompt = f"""
+Bias mitigation applied.
+
+Explain WHY this approach helps reduce bias.
+Keep it simple.
+"""
+
+        else:
+            return ""
+
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=prompt
+        )
+
+        return response.text
+
+    except:
+        # fallback (important)
+        if context_type == "data_upload":
+            return "Dataset loaded. Check for sensitive attributes like race, gender, or age."
+        elif context_type == "selection":
+            return "Ensure selected attributes represent meaningful demographic groups."
+        elif context_type == "analysis":
+            return "Higher gap indicates stronger bias across groups."
+        elif context_type == "mitigation":
+            return "Rebalancing reduces unequal treatment across groups."
+
+    return ""

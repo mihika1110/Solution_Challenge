@@ -2,8 +2,8 @@ import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+import ai_auditor as ai  # ✅ NEW
 
-# ✅ CACHE (prevents recomputation)
 @st.cache_data
 def compute_correlation(df):
     numeric_df = df.select_dtypes(include=['number'])
@@ -19,20 +19,25 @@ def show_data_ui():
     if uploaded_file is not None:
         df = pd.read_csv(uploaded_file)
         
-        # 1. REMOVE EMPTY/NaN FEATURES
+        # CLEANING
         threshold = len(df) * 0.5
         df = df.dropna(thresh=threshold, axis=1)
         df = df.dropna()
-        
-        # Remove technical columns
         df = df.loc[:, ~df.columns.str.contains('^Unnamed|^id$|index', case=False)]
 
         st.write(f"✅ Cleaned Dataset: {df.shape[0]} rows, {df.shape[1]} columns.")
         
+        # ✅ AI FIRST IMPRESSION
+        with st.container(border=True):
+            st.markdown("🤖 AI First Impression")
+            with st.spinner("🤖 AI thinking..."):
+                insight = ai.generate_micro_insight("data_upload", df=df)
+                st.info(insight)
+
         st.write("#### Data Preview")
         st.dataframe(df.head(5), use_container_width=True)
 
-        # --- FEATURE SELECTION ---
+        # FEATURE SELECTION
         st.markdown("### Step 2: 🎯 Audit Configuration") 
         st.info("Select the 'Target' and 'Sensitive Attributes' to audit fairness.")
         
@@ -47,22 +52,36 @@ def show_data_ui():
 
         with col2:
             all_potential_features = [c for c in df.columns if c != target_col]
+
+            # ✅ FILTER HIGH-CARDINALITY
             valid_protected_cols = [
-            c for c in all_potential_features
-            if df[c].nunique() < 20   # threshold
-        ]
+                c for c in all_potential_features
+                if df[c].nunique() < 20
+            ]
 
-        if not valid_protected_cols:
-            st.warning("⚠️ No suitable categorical columns found for fairness analysis.")
-            protected_cols = []
-        else:
-            protected_cols = st.multiselect(
-                "Select Sensitive Attribute(s):",
-                options=valid_protected_cols,
-                default=[valid_protected_cols[0]]
-            )
+            if not valid_protected_cols:
+                st.warning("⚠️ No suitable categorical columns found.")
+                protected_cols = []
+            else:
+                protected_cols = st.multiselect(
+                    "Select Sensitive Attribute(s):",
+                    options=valid_protected_cols,
+                    default=[valid_protected_cols[0]]
+                )
 
-        # --- GROUP BALANCE ---
+        # ✅ AI GUIDANCE
+        if protected_cols:
+            with st.container(border=True):
+                st.markdown("🤖 AI Guidance")
+                with st.spinner("🤖 AI thinking..."):
+                    insight = ai.generate_micro_insight(
+                        "selection",
+                        target=target_col,
+                        protected_cols=protected_cols
+                    )
+                    st.info(insight)
+
+        # GROUP BALANCE
         if protected_cols:
             st.write("#### ⚖️ Group Balance Audit")
             st.info("Identify under-represented groups.")
@@ -74,7 +93,7 @@ def show_data_ui():
                     balance = df[col_name].value_counts()
                     st.bar_chart(balance)
 
-        # --- PROXY DETECTOR ---
+        # PROXY DETECTOR
         st.write("#### 🕵️ Proxy Detector")
         st.info("Scan for features highly correlated with sensitive attributes.")
 
@@ -84,23 +103,14 @@ def show_data_ui():
                 corr = compute_correlation(df)
 
                 if corr.empty:
-                    st.warning("No numeric data available for correlation mapping.")
+                    st.warning("No numeric data available.")
                 else:
-                    # ✅ LIMIT SIZE (performance boost)
                     if corr.shape[0] > 20:
-                        st.warning("Too many features — showing top 20 for performance.")
+                        st.warning("Too many features — showing top 20.")
                         corr = corr.iloc[:20, :20]
 
                     fig, ax = plt.subplots(figsize=(10, 5))
-
-                    # ❌ REMOVED annot=True (major speed fix)
-                    sns.heatmap(
-                        corr,
-                        annot=False,
-                        cmap="coolwarm",
-                        ax=ax
-                    )
-
+                    sns.heatmap(corr, annot=False, cmap="coolwarm", ax=ax)
                     st.pyplot(fig)
 
         return df, target_col, protected_cols, None
