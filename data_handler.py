@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-import ai_auditor as ai  # ✅ NEW
+import ai_auditor as ai 
 
 @st.cache_data
 def compute_correlation(df):
